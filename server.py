@@ -257,7 +257,7 @@ class SiriusHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             else:
                 # Generate short output
                 d = json.loads(res)
-                data = extract_latest(d,2)
+                data = extract_latest(d,5)
 
                 if data is None:
                     self.send_response(400)
