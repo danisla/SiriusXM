@@ -21,17 +21,19 @@
 # 3. This notice may not be removed or altered from any source distribution.
 #
 
+import os
 import sys
 import time
 import BaseHTTPServer
+import urlparse
 import requests
 import base64
 import json
 import datetime
 from channels import *
 
-SIRIUS_USERNAME = ''
-SIRIUS_PASSWORD = ''
+SIRIUS_USERNAME = os.environ.get("XM_USERNAME","")
+SIRIUS_PASSWORD = os.environ.get("XM_PASSWORD","")
 
 class SiriusXM:
     BASE_URL = 'https://player.siriusxm.com/rest/v1/experience/modules'
@@ -80,6 +82,31 @@ class SiriusXM:
             return res.json()['ModuleListResponse']['status'] == 1
         except:
             return False
+
+    def get_now_playing(self, channel_number):
+        channel_id = get_channel_id(channel_number)
+        if channel_id is None:
+            return None
+
+        ts = int(round(time.time() * 1000))
+        rfc3339 = datetime.datetime.utcnow().isoformat('T') + 'Z'
+        url = "%s/tune/now-playing-live?ccRequestType=AUDIO_VIDEO&hls_output_mode=none&id=%s&marker_mode=all_separate_cue_points&result-template=web&time=%d&timestamp=%s" % (self.BASE_URL, channel_id, ts, rfc3339)
+        res = self.session.get(url)
+
+        if res.status_code == 200:
+            if res.json()['ModuleListResponse']['status'] == 0:
+                print "Session is expired, logging in."
+
+                if self.get_auth_token(channel_number):
+                    return self.get_now_playing(channel_number)
+                else:
+                    print "Unable to log in"
+                    return None
+            else:
+                return res.content
+        else:
+            print "Unhandled HTTP status code: %d" % res.status_code
+            return None
 
     def get_auth_token(self, channel_number):
         channel_id = get_channel_id(channel_number)
@@ -177,6 +204,94 @@ class SiriusHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
         return False
 
+    def handle_now_playing(self):
+        parsed_path = urlparse.urlparse(self.path)
+
+        channel_number = parsed_path.path.split('/')[-1]
+
+        if channel_number == "":
+            print 'No channel number given'
+            self.send_response(400)
+            self.end_headers()
+            return True
+
+        res = self.sxm.get_now_playing(channel_number)
+
+        def extract_latest(d, count):
+            layers = d['ModuleListResponse']['moduleList']['modules'][0]['moduleResponse']['liveChannelData']['markerLists']
+            for layer in layers:
+                if layer["layer"] == "cut":
+                    if len(layer["markers"]) > 0:
+                        return layer["markers"][-count:]
+            return None
+
+        def extract_short(marker):
+            # Extract just album, title and artist info from a marker.
+            data = {
+                "artist": None,
+                "title": None,
+                "album": None,
+                "timestamp": None,
+                "duration": None
+            }
+
+            cut = marker["cut"]
+
+            if "artists" in cut and len(cut["artists"]) > 0:
+                data["artist"] = cut["artists"][0].get("name",None)
+            if "title" in cut:
+                data["title"] = cut["title"]
+            if "album" in cut:
+                data["album"] = cut["album"].get("title",None)
+            if "timestamp" in marker:
+                data["timestamp"] = marker["timestamp"].get("absolute",None)
+            if "duration" in marker:
+                data["duration"] = marker["duration"]
+
+            return data
+
+        if res is not None:
+
+            if "t=all" in parsed_path.query.lower():
+                data = res
+            else:
+                # Generate short output
+                d = json.loads(res)
+                data = extract_latest(d,2)
+
+                if data is None:
+                    self.send_response(400)
+                    self.end_headers()
+                    return True
+                else:
+                    if "t=detail" in parsed_path.query.lower():
+                        # Output with cut details.
+                        data = json.dumps(data)
+                    else:
+                        # Default, short output
+                        items = []
+                        for item in data:
+                            items.append(extract_short(item))
+
+                        if len(items) == 0:
+                            self.send_response(400)
+                            self.end_headers()
+                            return True
+                        else:
+                            data = json.dumps(items)
+
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", len(data))
+            self.send_header('Content-Type','application/json')
+            self.end_headers()
+            self.wfile.write(data)
+            return True
+        else:
+            self.send_response(400)
+            self.end_headers()
+            return True
+
     def handle_segment(self):
         res = None
         data = None
@@ -219,6 +334,9 @@ class SiriusHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             elif self.path.endswith('.aac'):
                 if self.handle_segment():
                     return
+            elif self.path.startswith("/now_playing/"):
+                self.handle_now_playing()
+                return
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -230,6 +348,11 @@ class SiriusHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             print 'Received broken pipe, ignoring...'
 
 if __name__ == '__main__':
+
+    if SIRIUS_USERNAME == "" or SIRIUS_PASSWORD == "":
+        print "ERROR: SIRIUS_USERNAME and SIRIUS_PASSWORD are not set."
+        sys.exit(1)
+
     httpd = BaseHTTPServer.HTTPServer(('', 9001), SiriusHandler)
     try:
         httpd.serve_forever()
