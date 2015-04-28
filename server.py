@@ -180,6 +180,9 @@ class SiriusHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     HLS_AES_KEY = base64.b64decode('0Nsco7MAgxowGvkUT8aYag==')
     sxm = SiriusXM(SIRIUS_USERNAME, SIRIUS_PASSWORD)
 
+    now_playing_cache = {}
+    cache_ttl = 30
+
     def handle_key(self):
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain')
@@ -208,14 +211,29 @@ class SiriusHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         parsed_path = urlparse.urlparse(self.path)
 
         channel_number = parsed_path.path.split('/')[-1]
-
         if channel_number == "":
             print 'No channel number given'
             self.send_response(400)
             self.end_headers()
             return True
 
-        res = self.sxm.get_now_playing(channel_number)
+
+        now = datetime.datetime.utcnow()
+        res,timestamp = self.now_playing_cache.get(channel_number,(None, None))
+
+        fetch = False
+        ttl = self.cache_ttl
+        if res is not None and timestamp is not None:
+            ttl = self.cache_ttl - (now - timestamp).seconds
+            if ttl <= 0:
+                fetch = True
+                ttl = self.cache_ttl
+        else:
+            fetch = True
+
+        if fetch:
+            res = self.sxm.get_now_playing(channel_number)
+            self.now_playing_cache[channel_number] = (res,now)
 
         def extract_latest(d, count):
             layers = d['ModuleListResponse']['moduleList']['modules'][0]['moduleResponse']['liveChannelData']['markerLists']
@@ -280,8 +298,10 @@ class SiriusHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                         else:
                             data = json.dumps(items)
 
+            expires = now + datetime.timedelta(0,ttl)
             self.send_response(200)
             self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Expires", expires.strftime('%a, %d %b %Y %H:%M:%S GMT'))
             self.send_header("Content-Length", len(data))
             self.send_header('Content-Type','application/json')
             self.end_headers()
