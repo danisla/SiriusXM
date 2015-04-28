@@ -353,7 +353,12 @@ if __name__ == '__main__':
         print "ERROR: SIRIUS_USERNAME and SIRIUS_PASSWORD are not set."
         sys.exit(1)
 
-    httpd = BaseHTTPServer.HTTPServer(('', 9001), SiriusHandler)
+    host = os.environ.get("LISTEN_HOST",'0.0.0.0')
+    port = int(os.environ.get("LISTEN_PORT","9001"))
+
+    print "Listening on: http://%s:%d" % (host,port)
+
+    httpd = BaseHTTPServer.HTTPServer((host, port), SiriusHandler)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
