@@ -36,7 +36,7 @@ function process() {
     id="${channel_number}_${ts}"
     doc=`jq -r -c ".channel_number=${channel_number}|.details=${DATA_DETAILS}" <<< "${doc}"`
     req=`cat <<- EOF
-{ "update" : { "_type": "event", "_id": "${id}", "doc_as_upsert": true }
+{ "update" : { "_type": "events", "_id": "${id}", "doc_as_upsert": true }
 EOF`
     echo $req
     echo `jq -r -c ".doc=${doc}|.doc_as_upsert=true" <<< {}`
