@@ -10,8 +10,12 @@ CHAN_IDS=$2
 ES_HOST=$3
 ES_INDEX=$4
 
+DEBUG=0
+
 function log {
-  >&2 echo "`date`: ${1}"
+  if [[ $DEBUG -eq 1 ]]; then
+    >&2 echo "`date`: ${1}"
+  fi
 }
 
 function get_url() {
@@ -29,17 +33,37 @@ function get_url() {
 
 function process() {
   DATA=$1
-  DATA_DETAILS=$2
-  channel_number=$3
+  channel_number=$2
   for doc in $(jq -r -c .[] <<< ${DATA}); do
     ts=`jq -r -c ".timestamp" <<< $doc`
     id="${channel_number}_${ts}"
-    doc=`jq -r -c ".channel_number=${channel_number}|.details=${DATA_DETAILS}" <<< "${doc}"`
+    doc=`jq -r -c ".channel_number=${channel_number}" <<< "${doc}"`
     req=`cat <<- EOF
 { "update" : { "_type": "events", "_id": "${id}", "doc_as_upsert": true }
 EOF`
     echo $req
     echo `jq -r -c ".doc=${doc}|.doc_as_upsert=true" <<< {}`
+
+  done
+}
+
+function process_meta() {
+  DATA=$1
+  for doc in $(jq -r -c ". | .[].cut" <<< ${DATA}); do
+    artist=`jq -r -c ".artists[0].name" <<< ${doc}`
+    title=`jq -r -c ".title" <<< ${doc}`
+    album=`jq -r -c ".album.title" <<< ${doc}`
+    album_details=`jq -r -c ".album" <<< ${doc}`
+    album_details=`jq -r -c ".album_details=${album_details}" <<< {}`
+    id=`echo "${artist} - ${title} - ${album}" | tr ' ' '_'`
+    doc=`jq -r -c ".artist=\"${artist}\"|.title=\"${title}\"|.album=\"${album}\"" <<< {}`
+    doc=`echo ${doc} ${album_details} | jq -r -c -s add`
+    req=`cat <<- EOF
+{ "update" : { "_type": "meta", "_id": "${id}", "doc_as_upsert": true }
+EOF`
+    echo $req
+    echo `jq -r -c ".doc=${doc}|.doc_as_upsert=true" <<< {}`
+
   done
 }
 
@@ -57,11 +81,12 @@ for channel_number in `tr , ' ' <<< $CHAN_IDS`; do
 
   url="${XM_HOST}/now_playing/${channel_number}"
 
-  DATA_DETAILS=`get_url ${url}?t=detail`
+  META=`get_url ${url}?t=detail`
   DATA=`get_url ${url}`
 
   if [[ ! -z "${DATA}" ]]; then
-    bulk "`process \"${DATA}\" \"${DATA_DETAILS}\" $channel_number`"
+    bulk "`process \"${DATA}\" $channel_number`"
+    bulk "`process_meta \"${META}\"`"
   fi
   IFS=${OLD_IFS}
 
