@@ -10,9 +10,9 @@ CHAN_IDS=$2
 ES_HOST=$3
 ES_INDEX=$4
 
-DEBUG=0
+DEBUG=${DEBUG:-0}
 
-function log {
+function log {  
   if [[ $DEBUG -eq 1 ]]; then
     >&2 echo "`date`: ${1}"
   fi
@@ -50,13 +50,13 @@ EOF`
 function process_meta() {
   DATA=$1
   for doc in $(jq -r -c ". | .[].cut" <<< ${DATA}); do
-    artist=`jq -c ".artists[0].name" <<< ${doc}`
-    title=`jq -c ".title" <<< ${doc}`
-    album=`jq -c ".album.title" <<< ${doc}`
+    artist=`jq -r -c ".artists[0].name" <<< ${doc}`
+    title=`jq -r -c ".title" <<< ${doc}`
+    album=`jq -r -c ".album.title" <<< ${doc}`
     album_details=`jq -r -c ".album" <<< ${doc}`
     album_details=`jq -r -c ".album_details=${album_details}" <<< {}`
     id=`echo "${artist} - ${title} - ${album}" | tr ' ' '_'`
-    doc=`jq -r -c ".artist=${artist}|.title=${title}|.album=${album}" <<< {}`
+    doc=`jq -r -c ".artist=\"${artist}\"|.title=\"${title}\"|.album=\"${album}\"" <<< {}`
     doc=`echo ${doc} ${album_details} | jq -r -c -s add`
     req=`cat <<- EOF
 { "update" : { "_type": "meta", "_id": "${id}", "doc_as_upsert": true }
@@ -68,7 +68,12 @@ EOF`
 }
 
 function bulk() {
-  curl -sf -XPOST ${ES_HOST}/${ES_INDEX}/_bulk --data-binary @- <<< "$1" >/dev/null
+  OUTPUT=`curl -s -XPOST ${ES_HOST}/${ES_INDEX}/_bulk --data-binary @- <<< "$1"`
+  if [[ $? -ne 0 ]]; then
+    log "Error running bulk insert"
+    log "$1"
+    log "$OUTPUT"
+  fi
 }
 
 function rand_sleep() {
@@ -87,6 +92,8 @@ for channel_number in `tr , ' ' <<< $CHAN_IDS`; do
   if [[ ! -z "${DATA}" ]]; then
     bulk "`process \"${DATA}\" $channel_number`"
     bulk "`process_meta \"${META}\"`"
+  else
+    log "WARN: No data returned"
   fi
   IFS=${OLD_IFS}
 
