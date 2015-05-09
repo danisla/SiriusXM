@@ -50,13 +50,13 @@ EOF`
 function process_meta() {
   DATA=$1
   for doc in $(jq -r -c ". | .[].cut" <<< ${DATA}); do
-    artist=`jq -r -c ".artists[0].name" <<< ${doc}`
-    title=`jq -r -c ".title" <<< ${doc}`
-    album=`jq -r -c ".album.title" <<< ${doc}`
+    artist=`jq -c ".artists[0].name" <<< ${doc}`
+    title=`jq -c ".title" <<< ${doc}`
+    album=`jq -c ".album.title" <<< ${doc}`
     album_details=`jq -r -c ".album" <<< ${doc}`
     album_details=`jq -r -c ".album_details=${album_details}" <<< {}`
     id=`echo "${artist} - ${title} - ${album}" | tr ' ' '_'`
-    doc=`jq -r -c ".artist=\"${artist}\"|.title=\"${title}\"|.album=\"${album}\"" <<< {}`
+    doc=`jq -r -c ".artist=${artist}|.title=${title}|.album=${album}" <<< {}`
     doc=`echo ${doc} ${album_details} | jq -r -c -s add`
     req=`cat <<- EOF
 { "update" : { "_type": "meta", "_id": "${id}", "doc_as_upsert": true }
