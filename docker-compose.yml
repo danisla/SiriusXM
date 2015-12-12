@@ -1,0 +1,7 @@
+server:
+  image: danisla/siriusxm:latest
+  ports:
+    - 9001:9001
+  environment:
+    XM_USERNAME:
+    XM_PASSWORD:
